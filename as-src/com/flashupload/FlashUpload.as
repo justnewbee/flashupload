@@ -1,10 +1,8 @@
 /**
- * For IE bug when destoy, I have to intrude into AS, and the day I begin to do AS is my birthday too!
- * @author <a href="mailto:jiancwan@cisco.com">Jianchun Wang</a>
- * <h3>Change History:</h3>
- * <ul>
- *   <li><b>1.0.0 [2011-10-25/Jianchun]: </b>After so many has been modified, the name is change at last.</li>
- * </ul>
+ * I have to look into AS because it is not possible to fix some bugs only at JS side.
+ * Once I dip into AS side, I see that it could have been much better, and finaly I decide to rewrite SWFUpload AS code.
+ * 
+ * @author <a href="mailto:justnewbee@gmail.com">Jianchun Wang</a>
  */
 package com.flashupload {
 	import flash.display.Sprite;
@@ -30,62 +28,45 @@ package com.flashupload {
 	import flash.utils.Timer;
 	
 	public class FlashUpload extends Sprite {
-		private static const EXTERNAL_INTERFACES : Array = ["SetOption", "GetOption",
+		private static const EXTERNAL_INTERFACES : Array = [// interfaces exposed to JS, capitalized so that they look different from normal internal functions
+			"SetOption", "GetOption",
 			"Browse", "StartUpload", "CancelUpload", "CancelQueue",
 			"GetFile", "AddFileParam", "RemoveFileParam",
-			"Destroy","TestExternalInterface"];
+			"Destroy", "TestExternalInterface"];
 		
 		private var cursorSprite : Sprite;
 		private var keepBusy : Function;
 		private var browserMultiple : FileReferenceList = new FileReferenceList();
-		private var browserSingle : FileReference = null;// no set because it cannot be reused like the FileReferenceList, it gets setup in the Browse method
-		private var fileQueue : Array;// holds a list of all items that are to be uploaded
+		private var browserSingle : FileReference = null;// no set because it cannot be reused like the FileReferenceList, it gets setup in the Browse method when options.multiple is false
+		private var fileQueue : Array;// holds a list of all file items that are to be uploaded
 		private var currFileItem : FileItem = null;// currently being uploaded FileItem
 		private var hasCalledFlashReady : Boolean = false;
-		private var timerRestoreExtInt : Timer = null;
+		private var timerExtCheck : Timer = null;
 		private var timerServerData : Timer = null;
 		private var timerAssumeSuccess : Timer = null;
 		
-		private var options : Options;
-		
-		private static function externalCall(flashupload : FlashUpload, fn : String, ...parameters) : * {
-			var jsCall : String = flashupload.GetOption("jsCall"),
-				movieName : String = flashupload.GetOption("movieName");
-			
-			switch (parameters.length) {
-			case 3:
-				return ExternalInterface.call(jsCall, movieName, fn, escapeMessage(parameters[0]), escapeMessage(parameters[1]), escapeMessage(parameters[2]));
-			case 2:
-				return ExternalInterface.call(jsCall, movieName, fn, escapeMessage(parameters[0]), escapeMessage(parameters[1]));
-			case 1:
-				return ExternalInterface.call(jsCall, movieName, fn, escapeMessage(parameters[0]));
-			default:
-				return ExternalInterface.call(jsCall, movieName, fn);
-			}
-		}
+		private var options : Options;// this object will store all the flashvar parameters
 		
 		/**
-		 * Escapes all the backslashes which are not translated correctly in the Flash -> JavaScript Interface
+		 * Escapes all the backslashes which are not translated correctly in the AS -> JS interface.
 		 *
-		 * These functions had to be developed because the ExternalInterface has a bug that simply places the
-		 * value a string in quotes (except for a " which is escaped) in a JavaScript string literal which
-		 * is executed by the browser. These often results in improperly escaped string literals if your
-		 * input string has any backslash characters. For example the string:
-		 * "c:\Program Files\uploadtools\"
+		 * It is because that ExternalInterface has a bug that simply places the value of a string in quotes (except for a " which is escaped)
+		 * in a JS string literal which is executed by the browser. It often results in improperly escaped string literals if your input string
+		 * has any backslash characters. For example, the string: "C:\Program Files\uploadtools\"
 		 * is placed in a string literal (with quotes escaped) and becomes:
-		 * var __flash__temp = "\"c:\Program Files\uploadtools\\"";
-		 * This statement will cause errors when executed by the JavaScript interpreter:
+		 * var __flash__temp = "\"C:\Program Files\uploadtools\\"";
+		 * This statement will cause errors when executed by the JS interpreter:
 		 * 1) The first \" is succesfully transformed to a "
 		 * 2) \P is translated to P and the \ is lost
 		 * 3) \u is interpreted as a unicode character and causes an error in IE
 		 * 4) \\ is translated to \
 		 * 5) leaving an unescaped " which causes an error
 		 *
-		 * I fixed this by escaping \ characters in all outgoing strings. The above escaped string becomes:
-		 * var __flash__temp = "\"c:\\Program Files\\uploadtools\\\"";
+		 * This it fixed by escaping \ characters in all outgoing strings. The above escaped string becomes:
+		 * var __flash__temp = "\"C:\\Program Files\\uploadtools\\\"";
 		 * which contains the correct string literal.
 		 *
-		 * Note: The "var __flash__temp = " portion of the example is part of the ExternalInterface not part of my escaping routine.
+		 * Note: The "var __flash__temp = " portion of the example is part of the ExternalInterface, not part of escaping routine.
 		 */
 		private static function escapeMessage(message : *) : * {
 			if (message is String) {
@@ -107,18 +88,18 @@ package com.flashupload {
 			return message.replace(/\\/g, "\\\\");
 		}
 		
-		private static function escapeArray(messageArr : Array) : Array {
-			for (var i : uint = 0, l : uint = messageArr.length; i < l; i++) {
-				messageArr[i] = escapeMessage(messageArr[i]);
+		private static function escapeArray(arr : Array) : Array {
+			for (var i : uint = 0, l : uint = arr.length; i < l; i++) {
+				arr[i] = escapeMessage(arr[i]);
 			}
-			return messageArr;
+			return arr;
 		}
 		
-		private static function escapeObject(messageObj : Object) : Object {
-			for (var name : String in messageObj) {
-				messageObj[name] = escapeMessage(messageObj[name]);
+		private static function escapeObject(obj : Object) : Object {
+			for (var name : String in obj) {
+				obj[name] = escapeMessage(obj[name]);
 			}
-			return messageObj;
+			return obj;
 		}
 		
 		/**
@@ -134,12 +115,12 @@ package com.flashupload {
 			this.setupExternalInterface();
 			this.setupEvents();
 			
-			if (externalCall(this, "testExternalInterface")) {
-				externalCall(this, "flashReady");
+			if (this.callJs("testExternalInterface")) {
 				this.hasCalledFlashReady = true;
+				this.callJs("flashReady");
+				this.callJs("hashTitle");
 			}
 			
-			externalCall(this, "hashTitle");
 			this.log("Init Complete");
 		}
 		
@@ -173,17 +154,19 @@ package com.flashupload {
 				try {
 					ExternalInterface.addCallback(callback, this[callback]);
 				} catch (ex : Error) {
-					this.log("ExternalInterface \"" + callback + "\" cannot be set: " + ex.message);
+					this.log("ExternalInterface calback \"" + callback + "\" cannot be set: " + ex.message);
 				}
 			}
 			
-			externalCall(this, "cleanup");
+			this.callJs("cleanup");
 		}
 		
 		private function setupEvents() : void {
 			var flashupload : FlashUpload = this;
+			
+			// keep Flash Player busy so it doesn't show the "A script in this movie is causing Flash Player to run slowly" alert
 			var counter : Number = 0;
-			this.keepBusy = function() : void {// keep Flash Player busy so it doesn't show the "flash script is running slowly" error
+			this.keepBusy = function() : void {
 				if (++counter > 100) {
 					counter = 0;
 				}
@@ -195,7 +178,7 @@ package com.flashupload {
 			this.browserMultiple.addEventListener(Event.CANCEL, this.handleBrowseEnd);
 			
 			stage.addEventListener(MouseEvent.MOUSE_DOWN, function(event : MouseEvent) : void {
-				externalCall(flashupload, "hashTitle");
+				flashupload.callJs("hashTitle");
 			});
 			stage.addEventListener(MouseEvent.CLICK, function(event : MouseEvent) : void {
 				flashupload.handleStageClick(event);
@@ -213,21 +196,39 @@ package com.flashupload {
 				flashupload.checkExternalInterface();
 			});
 			timer.start();
-			this.timerRestoreExtInt = timer;
+			this.timerExtCheck = timer;
+		}
+		
+		/**
+		 * Call JS function. JS of FlashUpload provides a single (static) interface to AS which can be configured
+		 * using the `jsCall` option, so that JS and AS are not coupled as in SWFUpload.
+		 * All the `fn`s in this function MUST be found under JS static final object CALLED_BY_FLASH.
+		 */
+		private function callJs(fn : String, args : Array = null) : * {
+			var jsCall : String = this.GetOption("jsCall"),
+				id : String = this.GetOption("id");
+			
+			if (null == args) {
+				return ExternalInterface.call(jsCall, id, fn);
+			} else {
+				return ExternalInterface.call(jsCall, id, fn, escapeMessage(args));
+			}
 		}
 		
 		/**
 		 * Used to periodically check that the External Interface functions are still working
 		 */
 		private function checkExternalInterface() : void {
-			if (!externalCall(this, "testExternalInterface")) {
-				this.setupExternalInterface();
-				this.log("ExternalInterface reinitialized!");
-				if (!this.hasCalledFlashReady) {
-					externalCall(this, "flashReady");
-					externalCall(this, "hashTitle");
-					this.hasCalledFlashReady = true;
-				}
+			if (this.callJs("testExternalInterface")) {
+				return;
+			}
+			
+			this.setupExternalInterface();
+			this.log("ExternalInterface reinitialized!");
+			if (!this.hasCalledFlashReady) {
+				this.callJs("flashReady");
+				this.callJs("hashTitle");
+				this.hasCalledFlashReady = true;
 			}
 		}
 		
@@ -237,14 +238,14 @@ package com.flashupload {
 			var queuedCount : Number = 0;
 			
 			for each (var fileRef : FileReference in fileReferenceList) {
-				var fileItem : FileItem = new FileItem(fileRef, this.GetOption("movieName"));
+				var fileItem : FileItem = new FileItem(fileRef, this.GetOption("id"));
 				var errs : Array = [];
 				
 				// size check
 				var sizeMax : Number = this.GetOption("sizeMax"),
 					sizeMin : Number = this.GetOption("sizeMin"),
 					size : Number = fileItem.size;
-				if (isNaN(size)) {// when file size is bigger than 4G, flash will throw I/O exception while getting size, and the size would be set to NaN
+				if (isNaN(size)) {// throw I/O exception when getting size if file larger than 4G, and size would be NaN
 					errs.push(Err.getSizeInaccessible());
 				} else if (size === 0) {
 					errs.push(Err.getSizeZero());
@@ -252,7 +253,7 @@ package com.flashupload {
 					errs.push(Err.getSizeTooBig());
 				} else if (sizeMin > 0 && size < sizeMin) {
 					errs.push(Err.getSizeTooSmall());
-				}// size OK
+				}// else - OK
 				
 				// type check
 				var typesAllowed : Array = this.GetOption("typesAllowed"),
@@ -274,7 +275,7 @@ package com.flashupload {
 							break;
 						}
 					}
-				}// type OK
+				}// else - OK
 				if (typeInvalid) {
 					errs.push(Err.getTypeInvalid());
 				}
@@ -295,10 +296,10 @@ package com.flashupload {
 					errs.push(Err.getNameTooLong());
 				} else if (nameMin > 0 && nameSize < nameMin) {
 					errs.push(Err.getNameTooShort());
-				}
+				}// else - OK
 				
 				// extenernal validate check
-				var validation : String = externalCall(this, "validate", fileItem);
+				var validation : String = this.callJs("validate", [fileItem]);
 				if (validation) {
 					errs.push(Err.getValidationFail(validation));
 				}
@@ -310,21 +311,21 @@ package com.flashupload {
 				}
 				
 				if (errs.length) {
-					fileItem.filestatus = FileItem.STATUS_ERROR;
+					fileItem.status = FileItem.STATUS_ERROR;
 					fileItem.fileReference = null;
 					this.log("[QueueError] \"" + fileItem.id + "\" - error count: " + errs.length);
-					externalCall(this, "fileQueueError", fileItem, errs);
+					this.callJs("handleFileEvent", ["onFileQueueError", fileItem, errs]);
 				} else {
-					fileItem.filestatus = FileItem.STATUS_QUEUED;
+					fileItem.status = FileItem.STATUS_QUEUED;
 					this.fileQueue.push(fileItem);
 					queuedCount++;
 					this.log("[Queued] \"" + fileItem.id + "\" is queued");
-					externalCall(this, "fileQueued", fileItem);
+					this.callJs("handleFileEvent", ["onFileQueued", fileItem]);
 				}
 			}
 			
 			this.log("[BrowseEnd] Finished processing files. Selected=" + fileReferenceList.length + ", Queued=" + queuedCount + ", Total queued=" + this.fileQueue.length);
-			externalCall(this, "browseEnd", fileReferenceList.length, queuedCount, this.fileQueue.length);
+			this.callJs("browseEnd", [fileReferenceList.length, queuedCount, this.fileQueue.length]);
 		}
 		
 		private function fileUploadSuccess(fileItem : FileItem, serverData : String, responseReceived : Boolean = true) : void {
@@ -337,29 +338,31 @@ package com.flashupload {
 				this.timerAssumeSuccess = null;
 			}
 			
-			fileItem.filestatus = FileItem.STATUS_SUCCESS;
+			fileItem.status = FileItem.STATUS_UPLOADED;
 			
 			serverData = serverData || "";
 			serverData = serverData.replace(/^\s+|\s+$/g, "");
 			
 			this.log("[Success] \"" + fileItem.id + "\" Data: " + serverData);
-			externalCall(this, "fileUploadSuccess", fileItem, serverData, responseReceived);
+			this.callJs("handleFileEvent", ["onFileUploadSuccess", fileItem, serverData, responseReceived]);
 			
 			this.fileUploadComplete(fileItem);
 		}
 		
-		private function fileUploadError(fileItem : FileItem, err : Err) : void {
-			fileItem.filestatus = FileItem.STATUS_ERROR;
+		private function fileUploadError(fileItem : FileItem, err : Err, noCmpl : Boolean = false) : void {
+			fileItem.status = FileItem.STATUS_ERROR;
 			
 			this.log("[Error] \"" + fileItem.id + "\" " + err.name + ": " + err.message);
-			externalCall(this, "fileUploadError", fileItem, [err]);
+			this.callJs("handleFileEvent", ["onFileUploadError", fileItem, [err]]);
 			
+			if (noCmpl) {
+				return;
+			}
 			this.fileUploadComplete(fileItem);
 		}
 		
 		private function fileUploadComplete(fileItem : FileItem) : void {
-			var current : Boolean = fileItem == this.currFileItem;
-			if (current) {
+			if (fileItem == this.currFileItem) {
 				if (this.timerAssumeSuccess) {
 					this.timerAssumeSuccess.stop();
 					this.timerAssumeSuccess = null;
@@ -370,44 +373,47 @@ package com.flashupload {
 			this.clearFileReference(fileItem);
 			
 			this.log("[Complete] \"" + fileItem.id + "\" life cycle complete");
-			externalCall(this, "fileUploadComplete", fileItem);
+			this.callJs("handleFileEvent", ["onFileUploadComplete", fileItem]);
 		}
 		
 		private function buildRequest() : URLRequest {
 			var request : URLRequest = new URLRequest();
 			request.method = URLRequestMethod.POST;
 			
-			var filePost : Object = this.currFileItem.getPostObject();
-			var postParams : Object = this.GetOption("postParams");
 			var uploadUrl : String = this.GetOption("uploadUrl");
+			var params : Object = this.GetOption("params");
+			var fileParams : Object = this.currFileItem.getParams();
+			var mergedParams : Object = {};
 			var key : String;
 			
-			if (this.GetOption("useQueryString")) {
+			// merge global params and file individual params, individual has priority over global
+			for (key in params) {
+				if (params.hasOwnProperty(key)) {
+					mergedParams[key] = params[key];
+				}
+			}
+			for (key in fileParams) {
+				if (fileParams.hasOwnProperty(key)) {
+					mergedParams[key] = fileParams[key];
+				}
+			}
+			
+			if (this.GetOption("getMode")) {
 				var pairs : Array = [];
-				for (key in postParams) {
-					if (postParams.hasOwnProperty(key)) {
-						pairs.push(escape(key) + "=" + escape(postParams[key]));
+				for (key in mergedParams) {
+					if (mergedParams.hasOwnProperty(key) && mergedParams[key] !== null) {
+						pairs.push(escape(key) + "=" + escape(mergedParams[key]));
 					}
 				}
 				
-				for (key in filePost) {
-					if (filePost.hasOwnProperty(key)) {
-						pairs.push(escape(key) + "=" + escape(filePost[key]));
-					}
+				if (pairs.length > 0) {
+					request.url = uploadUrl + (uploadUrl.indexOf("?") > -1 ? "&" : "?") + pairs.join("&");
 				}
-				
-				request.url = uploadUrl + (uploadUrl.indexOf("?") > -1 ? "&" : "?") + pairs.join("&");
 			} else {
 				var post : URLVariables = new URLVariables();
-				for (key in postParams) {
-					if (postParams.hasOwnProperty(key)) {
-						post[key] = postParams[key];
-					}
-				}
-				
-				for (key in filePost) {
-					if (filePost.hasOwnProperty(key)) {
-						post[key] = filePost[key];
+				for (key in mergedParams) {
+					if (mergedParams.hasOwnProperty(key) && mergedParams[key] !== null) {
+						post[key] = mergedParams[key];
 					}
 				}
 				
@@ -443,22 +449,30 @@ package com.flashupload {
 			if (fileItem && fileItem.fileReference) {
 				fileItem.fileReference.removeEventListener(Event.OPEN, this.handleFileOpen);
 				fileItem.fileReference.removeEventListener(ProgressEvent.PROGRESS, this.handleFileProgress);
-				fileItem.fileReference.removeEventListener(IOErrorEvent.IO_ERROR, this.handleIOError);
-				fileItem.fileReference.removeEventListener(SecurityErrorEvent.SECURITY_ERROR, this.handleSecurityError);
-				fileItem.fileReference.removeEventListener(HTTPStatusEvent.HTTP_STATUS, this.handleHTTPError);
 				fileItem.fileReference.removeEventListener(DataEvent.UPLOAD_COMPLETE_DATA, this.handleSeverData);
+				
+				fileItem.fileReference.removeEventListener(IOErrorEvent.IO_ERROR, this.handleUploadError);
+				fileItem.fileReference.removeEventListener(SecurityErrorEvent.SECURITY_ERROR, this.handleUploadError);
+				fileItem.fileReference.removeEventListener(HTTPStatusEvent.HTTP_STATUS, this.handleUploadError);
 				
 				fileItem.fileReference = null;
 			}
 		}
 		
-		private function log(msg : String) : void {
-			if (!this.GetOption("debug") || !msg) {
-				return;
+		private function getFileFilters() : Array {
+			var types : Array = [];
+			for each (var ext : String in this.GetOption("typesAllowed")) {
+				types.push("*." + ext);
 			}
-			try {
-				externalCall(this, "log", "(FLASH) " + msg);
-			} catch (ex : Error) {}// pretend nothing happened
+			
+			var extStr : String = types.join(";") || "*.*";
+			return [new FileFilter(this.GetOption("typesDescription") + " (" + extStr + ")", extStr)];
+		}
+		
+		private function log(msg : String) : void {
+			if (this.GetOption("debug")) {
+				this.callJs("log", ["(FLASH) " + msg]);
+			}
 		}
 		
 		// =================================================
@@ -481,24 +495,23 @@ package com.flashupload {
 		
 		private function handleBrowseEnd(event : Event) : void {
 			this.log("[BrowseEnd] Browse cancelled");
-			externalCall(this, "browseEnd", 0, 0, this.fileQueue.length);
+			this.callJs("browseEnd", [0, 0, this.fileQueue.length]);
 		}
 		
 		private function handleFileOpen(event : Event) : void {
 			this.log("[OPEN] \"" + this.currFileItem.id + "\" is opened for uploading (suppressed all progress events)");
-			externalCall(this, "fileUploadProgress", this.currFileItem, 0, this.currFileItem.fileReference.size);
+			this.callJs("handleFileEvent", ["onFileUploadProgress", this.currFileItem, 0]);
 		}
 		
 		private function handleFileProgress(event : ProgressEvent) : void {
-			// On early than Mac OS X 10.3 bytesLoaded is always -1, convert this to zero. Do bytesTotal for good measure.
+			// On early than Mac OS X 10.3 bytesLoaded is always -1, convert this to zero.
 			// http://livedocs.adobe.com/flex/3/langref/flash/net/FileReference.html#event:progress
 			var bytesLoaded : Number = event.bytesLoaded < 0 ? 0 : event.bytesLoaded;
-			var bytesTotal : Number = event.bytesTotal < 0 ? 0 : event.bytesTotal;
 			
 			// Because Flash never fires a complete event if the server doesn't respond after 30 seconds or on Macs if there
 			// is no content in the response we'll set a timer and assume that the upload is successful after the defined amount of time.
 			// If the timeout is zero then we won't use the timer.
-			if (bytesLoaded === bytesTotal && bytesTotal > 0 && this.GetOption("assumeSuccessTimeout") > 0) {
+			if (bytesLoaded === this.currFileItem.size && this.GetOption("assumeSuccessTimeout") > 0) {
 				if (this.timerAssumeSuccess) {
 					this.timerAssumeSuccess.stop();
 					this.timerAssumeSuccess = null;
@@ -509,46 +522,30 @@ package com.flashupload {
 				this.timerAssumeSuccess.start();
 			}
 			
-			externalCall(this, "fileUploadProgress", this.currFileItem, bytesLoaded, bytesTotal);
+			this.callJs("handleFileEvent", ["onFileUploadProgress", this.currFileItem, bytesLoaded]);
 		}
 		
-		// NOTE: Flash Player does not support Uploads that require authentication. Attempting this will trigger an
-		// IOError or it will prompt for a username and password and may crash the browser (FireFox/Opera)
-		private function handleIOError(event : IOErrorEvent) : void {
-			// Only trigger an IOError event if we haven't already done an HTTP error
-			if (this.currFileItem.filestatus != FileItem.STATUS_ERROR) {
-				this.fileUploadError(this.currFileItem, Err.getIOError(event.text));
-			}
-		}
-		
-		private function handleSecurityError(event : SecurityErrorEvent) : void {
-			this.fileUploadError(this.currFileItem, Err.getSecurityError(event.text));
-		}
-		
-		private function handleHTTPError(event : HTTPStatusEvent) : void {
-			var isSuccessStatus : Boolean = false;
-			var httpSuccess : Array = this.GetOption("httpSuccess");
-			
-			for (var i : Number = 0; i < httpSuccess.length; i++) {
-				if (this.GetOption("httpSuccess")[i] === event.status) {
-					isSuccessStatus = true;
-					break;
+		private function handleUploadError(event : Event) : void {
+			if (event is HTTPStatusEvent) {
+				// IOError is triggered right after HTTPError, if we complete the upload process now,
+				// the IO handler will be removed, and flash player will throw uncaught exception, that's why we make `noCmpl` argument `true` here
+				this.fileUploadError(this.currFileItem, Err.getHttpError(HTTPStatusEvent(event).status.toString()), true);
+			} else if (event is IOErrorEvent) {
+				// NOTE: Flash Player does not support Uploads that require authentication.
+				// Attempting this will trigger an IOError or it will prompt for a username and password and may crash the browser (FireFox/Opera).
+				if (this.currFileItem.status == FileItem.STATUS_ERROR) {// so this `IOErrorEvent` is fired after `HTTPStatusEvent` which does not trigger complete in the error handler
+					this.fileUploadComplete(this.currFileItem);
+				} else {
+					this.fileUploadError(this.currFileItem, Err.getIOError(IOErrorEvent(event).text));
 				}
-			}
-			
-			if (isSuccessStatus) {
-				this.log("Translating HTTPError status code \"" + event.status + "\" to UploadSuccess");
-				
-				var serverDataEvent : DataEvent = new DataEvent(DataEvent.UPLOAD_COMPLETE_DATA, event.bubbles, event.cancelable, "");
-				this.handleSeverData(serverDataEvent);
-			} else {// TODO IOError is also called so we don't want to complete the upload yet
-				this.fileUploadError(this.currFileItem, Err.getHttpError(event.status.toString()));
+			} else if (event is SecurityErrorEvent) {
+				this.fileUploadError(this.currFileItem, Err.getIOError(SecurityErrorEvent(event).text));
 			}
 		}
 		
 		private function handleComplete(event : Event) : void {
 			/*
-			 * Because we cannot do COMPLETE or DATA events (we have to do both) we cannot just call fileUploadSuccess from the complete handler,
+			 * Because we cannot do COMPLETE or DATA events (we have to do both) we cannot just call `fileUploadSuccess` from the complete handler,
 			 * we have to wait for the Data event which may never come. However, testing shows it always comes within a couple milliseconds
 			 * if it is going to come so the solution is:
 			 * 
@@ -578,16 +575,6 @@ package com.flashupload {
 			this.fileUploadSuccess(this.currFileItem, "");
 		}
 		
-		private function getFileFilters() : Array {
-			var types : Array = [];
-			for each (var ext : String in this.GetOption("typesAllowed")) {
-				types.push("*." + ext);
-			}
-			
-			var extStr : String = types.join(";") || "*.*";
-			return [new FileFilter(this.GetOption("typesDescription") + " (" + extStr + ")", extStr)];
-		}
-		
 		// =================================================
 		// Below are externally exposed functions for JS all of which are initiated with uppercase.
 		// DONOT rename them!
@@ -596,9 +583,9 @@ package com.flashupload {
 		 * Called when JS destroy to fix IE recurring JS error bug.
 		 */
 		public function Destroy() : void {
-			if (this.timerRestoreExtInt) {
-				this.timerRestoreExtInt.stop();
-				this.timerRestoreExtInt = null;
+			if (this.timerExtCheck) {
+				this.timerExtCheck.stop();
+				this.timerExtCheck = null;
 			}
 			if (this.timerServerData) {
 				this.timerServerData.stop();
@@ -615,9 +602,15 @@ package com.flashupload {
 		}
 		
 		public function Browse() : void {
-			this.log("[Browse] Browsing " + (this.GetOption("multiple") ? "multiple files" : "single file"));
+			if (this.callJs("browseBeforeStart") === false) {
+				this.log("[Browse] Browsing was cancelled");
+				return;
+			}
+			
+			var multiple : Boolean = this.GetOption("multiple");
+			this.log("[Browse] Browsing " + (multiple ? "multiple files" : "single file"));
 			try {
-				if (this.GetOption("multiple")) {
+				if (multiple) {
 					this.browserMultiple.browse(this.getFileFilters());
 				} else {
 					this.browserSingle = new FileReference();
@@ -625,10 +618,10 @@ package com.flashupload {
 					this.browserSingle.addEventListener(Event.CANCEL, this.handleBrowseEnd);
 					this.browserSingle.browse(this.getFileFilters());
 				}
-				externalCall(this, "browseStart");
+				this.callJs("browseStart");
 			} catch (ex : Error) {
 				this.log("[Browse] Exception: " + ex.message);
-				externalCall(this, "browseException");
+				this.callJs("browseException");
 			}
 		}
 		
@@ -636,7 +629,7 @@ package com.flashupload {
 		 * Start a file to upload.
 		 */
 		public function StartUpload(fileId : String = "") : void {
-			if (this.currFileItem) {// only upload a file uploads are being processed
+			if (this.currFileItem) {// only upload a file when no uploads are being processed
 				this.log("[StartUpload] Upload already in progress, not starting another");
 				return;
 			}
@@ -644,48 +637,41 @@ package com.flashupload {
 			this.log("[StartUpload] Try to find " + (fileId ? "file \"" + fileId + "\"" : "first file in queue"));
 			
 			this.currFileItem = this.findQueuedFileItem(fileId, true);// true to "rip" that fileItem out
-			if (!this.currFileItem) {
+			var fileItem : FileItem = this.currFileItem;
+			
+			if (!fileItem) {
 				if (fileId) {
 					this.log("[StartUpload:Error] \"" + fileId + "\" FileNotFound: not found in queue");
-					externalCall(this, "fileUploadError", {
+					this.callJs("handleFileEvent", ["onFileUploadError", {
 						id: fileId
-					}, [Err.getFileNotFound()]);
+					}, [Err.getFileNotFound()]]);
 				}
 				this.log("[StartUpload] No files found in the queue");
 				return;
 			}
 			
 			if (!this.GetOption("uploadUrl")) {// missing upload url used to requeue the file and set status back to queued
-				this.fileUploadError(this.currFileItem, Err.getMissingUploadUrl());
+				this.fileUploadError(fileItem, Err.getMissingUploadUrl());
 				return;
 			}
 			
-			/*
-			 * Below are code from previouse ReturnUploadStart method.
-			 * 
-			 * The process of starting upload used to be like:
-			 * JS_startUpload --> AS_StartUpload --> JS_uploadStart --> JS_upload_start_handler + JS_return_upload_start_handler -(true/false)-> AS_ReturnUploadStart
-			 * This method used to have a "startUpload : Boolean" parameter, for which, if we return false in JS_upload_start_handler and do JS_startUpload in JS_upload_complete_handler,
-			 * it'll create an infinite loop.
-			 * 
-			 * I don't get it, is there any profit we can get from returning a boolean value from JS_upload_start_handler?
-			 * I wanted to make it break the chain to much simpler:
-			 * JS_startUpload --> AS_StartUpload --> JS_uploadStart --> JS_upload_start_handler
-			 */
-			this.currFileItem.filestatus = FileItem.STATUS_IN_PROGRESS;
-			this.log("[StartUpload] \"" + this.currFileItem.id + "\" starts uploading to " + this.GetOption("uploadUrl"));
-			externalCall(this, "fileUploadStart", this.currFileItem);
+			var urlRequest : URLRequest = this.buildRequest();
 			
-			try {// Set the event handlers
-				this.currFileItem.fileReference.addEventListener(Event.OPEN, this.handleFileOpen);
-				this.currFileItem.fileReference.addEventListener(ProgressEvent.PROGRESS, this.handleFileProgress);
-				this.currFileItem.fileReference.addEventListener(IOErrorEvent.IO_ERROR, this.handleIOError);
-				this.currFileItem.fileReference.addEventListener(SecurityErrorEvent.SECURITY_ERROR, this.handleSecurityError);
-				this.currFileItem.fileReference.addEventListener(HTTPStatusEvent.HTTP_STATUS, this.handleHTTPError);
-				this.currFileItem.fileReference.addEventListener(Event.COMPLETE, this.handleComplete);
-				this.currFileItem.fileReference.addEventListener(DataEvent.UPLOAD_COMPLETE_DATA, this.handleSeverData);
-				
-				this.currFileItem.fileReference.upload(this.buildRequest(), this.GetOption("filedataName"), false);
+			fileItem.status = FileItem.STATUS_UPLOADING;
+			this.log("[StartUpload] \"" + fileItem.id + "\" starts uploading to " + urlRequest.url);
+			this.callJs("handleFileEvent", ["onFileUploadStart", fileItem]);
+			
+			fileItem.fileReference.addEventListener(Event.OPEN, this.handleFileOpen);
+			fileItem.fileReference.addEventListener(ProgressEvent.PROGRESS, this.handleFileProgress);
+			fileItem.fileReference.addEventListener(Event.COMPLETE, this.handleComplete);
+			fileItem.fileReference.addEventListener(DataEvent.UPLOAD_COMPLETE_DATA, this.handleSeverData);
+			
+			fileItem.fileReference.addEventListener(IOErrorEvent.IO_ERROR, this.handleUploadError);
+			fileItem.fileReference.addEventListener(SecurityErrorEvent.SECURITY_ERROR, this.handleUploadError);
+			fileItem.fileReference.addEventListener(HTTPStatusEvent.HTTP_STATUS, this.handleUploadError);
+			
+			try {
+				fileItem.fileReference.upload(this.buildRequest(), this.GetOption("filedataName"), false);
 			} catch (ex : Error) {
 				this.fileUploadError(this.currFileItem, Err.getUploadFail(ex.errorID + "\n" + ex.name + "\n" + ex.message + "\n" + ex.getStackTrace()));
 			}
@@ -710,11 +696,11 @@ package com.flashupload {
 			
 			var current : Boolean = fileItem == this.currFileItem;
 			fileItem.fileReference.cancel();
-			fileItem.filestatus = FileItem.STATUS_CANCELLED;
+			fileItem.status = FileItem.STATUS_CANCELLED;
 			
 			this.log("[CancelUpload] \"" + fileItem.id + "\" was cancelled" + (triggerErrorEvent ? "" : " (suppressed fileUploadError event)"));
 			if (triggerErrorEvent) {
-				externalCall(this, "fileUploadError", fileItem, [Err.getCancelled(current)]);// DONT use this.fileUploadError because we don't want to trigger complete
+				this.callJs("handleFileEvent", ["onFileUploadError", fileItem, [Err.getCancelled(current)]]);// DONT use this.fileUploadError because we don't want to trigger complete
 			}
 			if (current) {
 				this.fileUploadComplete(fileItem);

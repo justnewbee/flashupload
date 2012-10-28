@@ -12,67 +12,163 @@
  * SWFUpload 2 is (&copy;) 2007-2008 Jake Roberts and is released under the MIT License:
  * http://www.opensource.org/licenses/mit-license.php
  * --------------- Copyright from SWFUpload -----------------
- * For the sake of adapting to jQuery framework and fixing bugs, both JS and AS are modified vastly.
- * It worked fine all the way... until a new requirement came that different HTML node may use one single SWFUpload. It's hard for SWFUpload to handle that task.
- * Since SWFUpload has been working well, I decide to create a "new" class "FlashUpload" in which code is modified more throughly not only to fit my own style,
- * but to make the code smaller and smarter.
  * 
- * Fixed bugs:
- * 1. Recurring JS error when destroy in IE - add "Destroy" in flash, and invoke it in JS "destroy"
- * 2. Repeating "ExternalInterface Reinitialized" in IE - force to load flash without cache
- * 3. Tab trapping - tabindex -1 for flash object, and handle keydown of tab in flash to try to move focus back to browser
- * 4. Error occurs if invoking "CallFlash" before ready - cache "CallFlash" before flash is ready, and invokde when ready
- * 5. IE title problem when there's "#" in url - add "onHashTitle" event
- * 6. File size NaN error - file larger than 4GB will not be processed by flash
- * 
- * Known issue:
- * 1. Firefox cannot restore focus from flash https://addons.mozilla.org/en-US/firefox/addon/restore-window-focus-after-fla/ (unsolvable)
+ * SWFUpload is a great upload utility, however, the code is somewhat old-fashioned and there's bugs it simply ignores.
+ * It could be much better, so I decide to create a "new" class "FlashUpload", fixed bugs in SWFUpload and adding some cool stuff to it.
+ * FlashUpload provides less and simpler but as powerful interfaces as SWFUpload.
  * 
  * @fileoverview This FlashUpload is the child of SWFUpload (version 2.2.0 2009-03-25) actually.
- * @author <a href="mailto:jiancwan@cisco.com">Jianchun Wang</a>
+ * @author <a href="mailto:justnewbee@gmail.com">Jianchun Wang</a>
  * @requires jQuery $gt;= 1.3.2
- * @description <h3>Change History:</h3>
- * <ul>
- *   <li><b>1.0.0 [2011-10-25/Jianchun]:</b> One year later, rewrite again (last time I rewrote it is 2011-10-23).</li>
- *   <li><b>1.0.1 [2012-01-17/Jianchun]:</b> Make file objects support multiple errors (because it happens in real life). PS. My baby girl is 10 days old this day :).</li>
- * </ul>
+ * @description An upload utility that uses flash to provide multiple file selection, progress feedback and other cool features.
  */
-// internal classes/objects definition
-var FlashUpload = function(opts) {
-	this._init(opts);
-};
 /**
- * @class FlashUpload
- * @param {Object} opts See defaults below.
+ * @class
+ * @name FlashUpload
  */
-window.FlashUpload = FlashUpload;
+var FlashUpload = function() {
+	this._init.apply(this, arguments);
+};
 $.extend(FlashUpload, /** @lends FlashUpload */{
+	/**
+	 * The UI template for generating a FlashUpload. The flash element here will always be transparent and fill up the outer span element.
+	 * What people see is the span (only when styled or texted); transparent span can be used to "cover" visual elements on the page.
+	 * @type String
+	 */
+	TMPL_UI: ["<span tabindex=\"-1\">",
+				"${text}",
+				"<object type=\"application/x-shockwave-flash\"",
+						" tabindex=\"-1\"",// FF and IE will still get inside flash element when tabbing, FF traps tab, IE finally tabs out
+						" id=\"${id}\"",// IE requires that flash element HAVE id to invoke ExternalInterface
+						" data=\"${flashUrl}\"",
+						" style=\"width: 100%; height: 100%; position: absolute; top: 0; left: 0;\">",
+					"<param name=\"wmode\" value=\"transparent\" />",
+					"<param name=\"quality\" value=\"high\" />",
+					"<param name=\"allowScriptAccess\" value=\"always\" />",
+					"<param name=\"movie\" value=\"${flashUrl}\" />",
+					"<param name=\"flashvars\" value=\"${flahvars}\" />",
+					"<p style=\"color: #AAA;\">${alt}</p>",
+				"</object>",
+			"</span>"].join(""),
+	/**
+	 * @namespace
+	 */
 	OPTS: {
-		doc: null,// IE7 won't report "invalid argument" when manipulating DOM in iframe document while using jquery from parent
-		text: "",
+		/**
+		 * The flash url where you will deploy the `flashupload.swf` file.
+		 * @type String
+		 */
 		flashUrl: "flashupload.swf",
-		nocache: false,
+		/**
+		 * Adds "_=[TIMESTAMP]" to the flashUrl when false.
+		 * @type Boolean
+		 */
+		cache: true,
+		/**
+		 * Where the UI is attached to in term of JQuery append, can be anything JQuery append accepts.
+		 * @type String|Element...
+		 */
 		attachPoint: "body",
+		/**
+		 * Making it true will make the span element absolutely positioned and fill up the attachPoint.
+		 * In this case you may not want to set the text option in the mean time.
+		 * @type Boolean
+		 */
 		cover: false,
+		/**
+		 * The text label you want FlashUpload to display, will be HTML escaped.
+		 * @type String
+		 */
+		text: "",
+		/**
+		 * Text for accessibility, can only be seen if the flash cannot be loaded.
+		 * @type String
+		 */
+		alt: "When you see this message, the flash is not loaded or disabled.",
+		/**
+		 * Style the span element, width, height, color, background-color... what ever else that applies to an HTML element.
+		 * @type Object
+		 */
 		css: null,
+		/**
+		 * Options given to flash provide basic validation on size, type and name, if there's more, use it for advanced validation.
+		 * @type Function
+		 */
 		validate: null,
-		/* -- options given to flash -- */
-		uploadUrl: "",
-		filedataName: "",
-		typesDescription: "All Files",
+		// options given to flash as flashvar
+		/**
+		 * Enable debugging or not.
+		 * @type Boolean
+		 */
 		debug: true,
+		/**
+		 * Where the files are to be uploaded, it should be set before a file is about to start uploading.
+		 * @type String
+		 */
+		uploadUrl: "",
+		/**
+		 * The file data parameter name accepted by upload server, "filedata" is used as default in AS.
+		 * @type String
+		 */
+		filedataName: "filedata",
+		/**
+		 * Description for allowed file types, used to change the type text in file browser window brought out by flash.
+		 * The file types are also displayed in it, e.g. "Image files" for types of "png", "jpg", "bmp" will become "Image files (*.png, *.jpg, *.bmp)".
+		 * @type String
+		 */
+		typesDescription: "All Files",
+		/**
+		 * Enable multiple file selection.
+		 * @type Boolean
+		 */
 		multiple: true,
+		/**
+		 * Disable file selection.
+		 * @type Boolean
+		 */
 		disabled: false,
+		/**
+		 * Whether the mouse cursor should be displayed as a hand (by default when `arrowCursor` is false) or arrow.
+		 * @type Boolean
+		 */
 		arrowCursor: false,
-		useQueryString: false,
-		httpSuccess: null,// array
-		postParams: null,// object
+		/**
+		 * Use "GET" or "POST" (by default) mode.
+		 * @type Boolean
+		 */
+		getMode: false,
+		/**
+		 * Global params you want to give to upload server alongside all files, if you want to do it only for individual files,
+		 * use `addFileParam` and `removeFileParam`.
+		 * @type Object
+		 */
+		params: null,
+		/**
+		 * Queue limitation, how many files can be put into the upload queue.
+		 * @type Number
+		 */
 		queueLimit: 0,
+		/**
+		 * Due to some bugs in the Flash Player, server response may not be acknowledged, `assumeSuccessTimeout` is used to see
+		 * if enough time has passed to fire upload success event anyway.
+		 * @type Number
+		 */
 		assumeSuccessTimeout: 0,
-		// basic validation
+		// basic validations
+		/**
+		 * Files larger than it will not be queued and will fire `onFileQueueError`.
+		 * @type Number
+		 */
 		sizeMax: 0,
+		/**
+		 * Files smaller than it will not be queued and will fire `onFileQueueError`.
+		 * @type Number
+		 */
 		sizeMin: 0,
 		/**
+		 * Used if only certain types are allowed, other files will NOT be displayed.
+		 * 
+		 * 
 		 * flash.net.FileFilter(description:String, extension:String) will take "*.jpg;*.png*.gif;*.bmp;" for extension, I'll just make it simpler.
 		 * 1. "" or [] will be "*.*"
 		 * 2. Array - ["JPG", "png", "gif", "bmp"]
@@ -81,26 +177,134 @@ $.extend(FlashUpload, /** @lends FlashUpload */{
 		 * @type Array|String
 		 */
 		typesAllowed: "",
+		/**
+		 * Used if only certain types are not allowed, the files will STILL be displayed, but cannot be queued and will fire `onFileQueueError`.
+		 * See `typesAllowed` for how you set this value.
+		 * @type Array|String
+		 */
 		typesDisallowed: "",
+		/**
+		 * Files with name longer than it will not be queued and will fire `onFileQueueError`.
+		 * @type Number
+		 */
 		nameMax: 0,
+		/**
+		 * Files with name shorter than it will not be queued and will fire `onFileQueueError`.
+		 * @type Number
+		 */
 		nameMin: 0,
+		/**
+		 * Files with name containing any of these characters will not be queued and will fire `onFileQueueError`.
+		 * You can put white space characters inside string as delimiter, but white space characters will NEVER be treated as illegal.
+		 * @type Array|String
+		 */
 		nameIllegalChars: "",
 		/* -- handlers -- */
-		onDebug: null,
+		/**
+		 * Default debug handler.
+		 */
+		onDebug: function() {
+			if (!window.console) {
+				return;
+			}
+			if ($.browser.msie) {// IE do NOT support logging object, neither console.xxx.apply, so...
+				console.info(Array.prototype.join.call(arguments, " "));
+			} else {// Chrome/Safari develop tool's console only works under console itself, console.info.apply(null, args) will throw "TypeError: Illegal invocation".
+				console.info.apply(console, arguments);
+			}
+		},
+		/**
+		 * IE has a problem that document.title will be changed to "#..." when url has hash section "#...", the problem is from flash player ActiveX, because
+		 * even if no flash is actually loaded, it still happens.
+		 * The title changes when the flash finishes loads, or mousedown on the flash element.
+		 * FlashUpload AS code will trigger JS `hashTitle` to inform JS of this event, users can use this event to walk by this problem.
+		 * NOTE: You have to know how to get the correct title and do it only for IE.
+		 * @type Function
+		 */
 		onHashTitle: null,
+		/**
+		 * Callback when flash elements finishes loads and initialization.
+		 * @type Function
+		 */
 		onFlashReady: null,
+		/**
+		 * Callback when mouse enters ui element.
+		 * @type Function
+		 */
 		onMouseEnter: null,
+		/**
+		 * Callback when mouse moves out of ui element.
+		 * @type Function
+		 */
 		onMouseLeave: null,
+		/**
+		 * Callback right before file browser window opens, return false to prevent it from being opened.
+		 * @type Function
+		 */
 		onBrowseBeforeStart: null,
+		/**
+		 * Callback when file window opens.
+		 * @type Function
+		 */
 		onBrowseStart: null,
+		/**
+		 * Flash doesn't allow triggering multiple file window for one instance, if user clicks and hopes to see a file window pop up when
+		 * there's one already (only maybe it's hanging behind the scene), this event will fire instead of onBrowseStart.
+		 * NOTE this can only happen in non-ie browsers, IE treats the file window as modal dialog which disables IE until the file window closes.
+		 * @type Function
+		 */
 		onBrowseException: null,
+		/**
+		 * Callback when file window closes.
+		 * @type Function
+		 */
 		onBrowseEnd: null,
+		/**
+		 * Callback when a file is successfully added to the queue, fired before `onBrowseEnd`.
+		 * @type Function
+		 * @param {Object} file
+		 */
 		onFileQueued: null,
+		/**
+		 * Callback when a file fails validation and cannot be queued, fired before `onBrowseEnd`.
+		 * @type Function
+		 * @param {Object} file
+		 * @param {Array} errors An array of objects { name:String, message: String }-s.
+		 */
 		onFileQueueError: null,
+		/**
+		 * Callback when a file starts uploading.
+		 * @type Function
+		 * @param {Object} file
+		 */
 		onFileUploadStart: null,
+		/**
+		 * Callback when progress information comes after a file starts upload, this events fires multiple times.
+		 * @type Function
+		 * @param {Object} file
+		 * @param {Number} bytes How many bytes have been uploaded.
+		 */
 		onFileUploadProgress: null,
-		onFileUploadError: null,
+		/**
+		 * Callback when file upload succeeds.
+		 * @type Function
+		 * @param {Object} file
+		 * @param {Object} serverData If it's an assumed success, it will be an empty string.
+		 * @param {Object} responseReceived The success is assumed after waiting for `options.assumeSuccessTimeout` will give `responseReceived` false.
+		 */
 		onFileUploadSuccess: null,
+		/**
+		 * Callback when file upload fails.
+		 * @type Function
+		 * @param {Object} file
+		 * @param {Array} errors
+		 */
+		onFileUploadError: null,
+		/**
+		 * Callback when file finishes uploading (succeeded or failed).
+		 * @type Function
+		 * @param {Object} file
+		 */
 		onFileUploadComplete: null
 	},
 	
@@ -123,29 +327,12 @@ $.extend(FlashUpload, /** @lends FlashUpload */{
 		CANCELLED: "Cancelled"
 	},
 	
-	FILE_STATUS: {
-		QUEUED: -1,
-		IN_PROGRESS: -2,
-		ERROR: -3,
-		COMPLETE: -4,
-		CANCELLED: -5
-	},
-	
-	HANDLERS: {// default event handlers, "this" is FlashUpload instance
-		/**
-		 * The default onDebug.
-		 * If you want to print debug messages call the "log(*...)" function.
-		 */
-		debug: function() {
-			if (!window.console) {
-				return;
-			}
-			if ($.browser.msie) {// IE do NOT support logging object, neither console.xxx.apply, so...
-				console.info(Array.prototype.join.call(arguments, " "));
-			} else {// Chrome/Safari develop tool's console only works under console itself, console.info.apply(null, args) will throw "TypeError: Illegal invocation".
-				console.info.apply(console, arguments);
-			}
-		}
+	STATUS: {
+		QUEUED : "queued",
+		UPLOADING : "uploading",
+		UPLOADED : "uploaded",
+		ERROR : "error",
+		CANCELLED : "cancelled"
 	},
 	
 	_instances: {},
@@ -157,18 +344,147 @@ $.extend(FlashUpload, /** @lends FlashUpload */{
 		};
 	})(),
 	/**
-	 * The xxxCallback-s are removed now from AS. AS only interacts with JS using this interface.
-	 * Every JS call is now in safe hands, this gids rid of IE's recurring "Object required" error when flash is removed from dom without desroying.
-	 * Parameters will be movieName, fn, ...(params for fn)
+	 * Replace place-holders inside a string with an object, adopted from mootools.
+	 * @param {String} str The string with place holders.
+	 * @param {Object} obj The key/value pairs used to substitute a string.
 	 */
-	callByAS: function() {
-		var args = Array.prototype.slice.call(arguments, 0),
-			movieName = args.shift(),
-			fn = args.shift(),
-			flashupload = FlashUpload._instances[movieName];
-		
+	_substitute: function(str, obj) {
+		return (str || "").replace(/\\?\$\{([^{}]+)\}/g, function(match, key) {
+			if (match.charAt(0) == "\\") {
+				return match.slice(1);
+			}
+			return (obj[key] !== undefined) ? obj[key] : "";
+		});
+	},
+	/**
+	 * Encode HTML.
+	 * @param str
+	 * @returns {String}
+	 */
+	_htmlEncode: function(str) {
+		return (str || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/ {2}/g, " &nbsp;");
+	},
+	/**
+	 * The only interface exposed to AS. Every JS call is now in safe hands, this gets rid of
+	 * IE's recurring "Object required" error when flash is removed from dom without destroying.
+	 * @param {String} id
+	 * @param {String} fn
+	 * @param {Array} [args]
+	 */
+	callByFlash: function(id, fn, args) {
+		var flashupload = FlashUpload._instances[id];
 		if (flashupload) {
-			return flashupload[fn].apply(flashupload, args);
+			return FlashUpload.CALLED_BY_FLASH[fn].apply(flashupload, args);
+		}
+	},
+	/**
+	 * Functions that will be called by Flash, DONOT rename them without changing AS code.
+	 * In all these functions, "this" is FlashUpload instance.
+	 * @namespace
+	 */
+	CALLED_BY_FLASH: {
+		/**
+		 * Check if JS can work in Flash (test if ExternalInterface is working).
+		 * @returns {Boolean}
+		 */
+		testExternalInterface: function() {
+			return this._callFlash("TestExternalInterface") || false;
+		},
+		/**
+		 * Do advanced validation if basic validation provided by options (size, type, name) cannot suite your needs.
+		 * @param {Object} file
+		 * @returns {String}
+		 */
+		validate: function(file) {
+			if (this._options.validate) {// return error string if the file object cannot pass validation
+				return this._options.validate.apply(this, arguments);
+			}
+		},
+		/**
+		 * Invoked when the flash element finishes loading and invoke all the flash calls before ready.
+		 */
+		flashReady: function() {
+			this._cleanup();
+			this._ready = true;
+			this._queueEvent("onFlashReady");
+			if (this._unreadyFlashCalls) {
+				var flashCall = this._unreadyFlashCalls.shift();
+				while (flashCall) {
+					this._callFlash(flashCall.funcName, flashCall.argArr);
+					flashCall = this._unreadyFlashCalls.shift();
+				}
+				this._unreadyFlashCalls = null;
+			}
+		},
+		/**
+		 * Called by Flash each time the ExternalInterface functions are created.
+		 */
+		cleanup: function() {
+			this._cleanup();
+		},
+		/**
+		 * Try to fix IE title change bug when there's hash (#...) in url.
+		 */
+		hashTitle: function() {
+			if (!$.browser.msie) {
+				return;
+			}
+			this._queueEvent("onHashTitle");
+		},
+		/**
+		 * Called before file browse window opens, return false in `onBrowseBeforeStart` to prevent it from being opened.
+		 * @returns {Boolean}
+		 */
+		browseBeforeStart: function() {
+			var callback = this._options.onBrowseBeforeStart;
+			if (callback) {
+				return callback.apply(this, arguments);
+			}
+		},
+		/**
+		 * This is a chance to do something when the browse window opens
+		 */
+		browseStart: function() {
+			this._queueEvent("onBrowseStart");
+		},
+		/**
+		 * For non-IE browsers, the file browser window is not an model dialog, user can click on the page regardless of it hanging there.
+		 * For flash, it never allows triggering another file browser window when there's one already.
+		 * Here we provide a chance to do something under this situation like giving some "smart" hint around the upload element.
+		 */
+		browseException: function() {
+			this._queueEvent("onBrowseException");
+		},
+		/**
+		 * Called after the file dialog has closed and the selected files are queued (or fail to be queued).
+		 * You could call `startUpload` here if you want the queued files to begin uploading immediately.
+		 * @param {Number} selectNum
+		 * @param {Number} queuedNum
+		 * @param {Number} totalQueuedNum
+		 */
+		browseEnd: function(selectNum, queuedNum, totalQueuedNum) {
+			this._getUI().focus();
+			this._queueEvent("onBrowseEnd", [selectNum, queuedNum, totalQueuedNum]);
+		},
+		/**
+		 * Called on each file event, merged due to that old ones act in the same manner `this._queueEvent("onFileXxx", );`.
+		 * @param {String} onFileXxx The callback event name.
+		 * @param {Object} file
+		 * @param {...} other_args
+		 */
+		handleFileEvent: function(/*onFileXxx, file[, ...other_args]*/) {
+			var args = Array.prototype.slice.apply(arguments, [0]),
+				onFileXxx = args.shift();
+			
+			this._queueEvent(onFileXxx, args);
+		},
+		/**
+		 * Called by FlashUpload JS and AS functions when debug is enabled. Those message from AS will be tagged with wording "(FLASH)".
+		 * The messages will be written to console (if exists) by default. You can override this event and have messages written where you want.
+		 * @param {...}
+		 */
+		log: function() {
+			this._log.apply(this, arguments);
 		}
 	}
 });
@@ -177,7 +493,7 @@ $.extend(FlashUpload.prototype, /** @lends FlashUpload.prototype */{
 	 * The id for the movie.
 	 * @type String
 	 */
-	_movieName: "",
+	_id: "",
 	/**
 	 * Holds the options object.
 	 */
@@ -202,42 +518,72 @@ $.extend(FlashUpload.prototype, /** @lends FlashUpload.prototype */{
 	 * @param {Object} settings
 	 */
 	_init: function(opts) {
-		var movieName = FlashUpload._uuid(),
+		var id = FlashUpload._uuid(),
 			options = $.extend({}, FlashUpload.OPTS, opts);
 		
-		if (options.debug) {
-			options.onDebug = options.onDebug || FlashUpload.HANDLERS.debug;
-		} else {
-			delete options.onDebug;
+		if (!options.cache || $.browser.msie) {// IE has problem with flash cache (repeating "ExternalInterface Reinitialized"), see http://www.swfupload.org/forum/generaldiscussion/2159
+			options.flashUrl = options.flashUrl + (options.flashUrl.indexOf("?") < 0 ? "?" : "&") + "_=" + new Date().getTime();
 		}
 		
-		if (options.nocache || $.browser.msie) {// IE has problem with flash cache (repeating "ExternalInterface Reinitialized"), see http://www.swfupload.org/forum/generaldiscussion/2159
-			options.flashUrl = options.flashUrl + (options.flashUrl.indexOf("?") < 0 ? "?" : "&") + "nocache=" + new Date().getTime();
-		}
+		options.params = options.params || {};
 		
-		options.postParams = options.postParams || {};
-		options.httpSuccess = options.httpSuccess || [];
-		
-		this._movieName = movieName;
+		this._id = id;
 		this._options = options;
 		this._eventQueue = [];
 		
 		// load flash
 		var movie = this._getMovieElement();
 		if (movie) {
-			this.log("(JS) EXCEPTION: cannot add the flash movie because movie id is already taken!");
+			this._log("(JS) EXCEPTION: cannot add the flash movie because movie id is already taken!");
 			return;
 		}
 		
 		var attachPoint = $(options.attachPoint);// Get the element where we will be placing the flash movie
 		if (!attachPoint.length) {
-			this.log("(JS) EXCEPTION: cannot find the attachPoint element!");
+			this._log("(JS) EXCEPTION: cannot find the attachPoint element!");
 			return;
 		}
 		
 		this._getUI(attachPoint);
-		FlashUpload._instances[movieName] = this;// Setup global control tracking
-		this.log("(JS) Created!", options);
+		FlashUpload._instances[id] = this;// Setup global control tracking
+		this._log("(JS) Created!", options);
+	},
+	/**
+	 * Removes Flash added functions to the DOM node to prevent memory leaks in IE.
+	 */
+	_cleanup: function() {
+		var movie = this._getMovieElement();
+		if (!movie) {
+			return;
+		}
+		
+		window.__flash__removeCallback = function(instance, name) {// Fix flash's own cleanup code so if the SWF movie was removed from the page it doesn't display errors.
+			if (instance) {
+				instance[name] = null;
+			}
+		};
+		
+		// Pro-actively unhook all the Flash functions
+		if (typeof movie.CallFunction === "unknown") {
+			this._log("(JS) Removing Flash functions hooks (this should only run in IE to prevent memory leaks).");
+			for (var k in movie) {
+				try {// You have to try.. catch, in IE, getting "filters" will throw "Unspecified error".
+					if (typeof movie[k] === "function") {
+						movie[k] = null;
+					}
+				} catch (ex) {}
+			}
+		}
+	},
+	/**
+	 * JS side logging.
+	 */
+	_log: function() {
+		if (this._options.debug && arguments.length) {
+			var args = Array.prototype.slice.call(arguments, 0);
+			args.unshift("[FlashUpload] " + this._id);
+			this._queueEvent("onDebug", args);
+		}
 	},
 	/* -------------------- PRIVATE -------------------- */
 	/**
@@ -245,7 +591,7 @@ $.extend(FlashUpload.prototype, /** @lends FlashUpload.prototype */{
 	 * @returns {DOMNode}
 	 */
 	_getMovieElement: function() {
-		return $("#" + this._movieName)[0];
+		return $("#" + this._id)[0];
 	},
 	/**
 	 * Get UI as JQNode.
@@ -253,7 +599,7 @@ $.extend(FlashUpload.prototype, /** @lends FlashUpload.prototype */{
 	 * @returns JQNode || null
 	 */
 	_getUI: function(attachPoint) {
-		var $ui = $("#" + this._movieName).parent();
+		var $ui = $("#" + this._id).parent();
 		if ($ui.length) {
 			return $ui;
 		}
@@ -263,31 +609,29 @@ $.extend(FlashUpload.prototype, /** @lends FlashUpload.prototype */{
 		
 		var $attachPoint = $(attachPoint),
 			options = this._options,
+			params = options.params,
 			paramPairs = [];
 		
-		if (options.postParams) {
-			for (var k in options.postParams) {
-				if (options.postParams.hasOwnProperty(k)) {
-					paramPairs.push(encodeURIComponent(k) + "=" + encodeURIComponent(postParams[k]));
+		if (params) {
+			for (var k in params) {
+				if (params.hasOwnProperty(k)) {
+					paramPairs.push(encodeURIComponent(k) + "=" + encodeURIComponent(params[k]));
 				}
 			}
 		}
 		
-		var flahVarsStr = ["jsCall=", encodeURIComponent("FlashUpload.callByAS"),
-				"&amp;movieName=", encodeURIComponent(this._movieName),
+		var flahvars = ["jsCall=", encodeURIComponent("FlashUpload.callByFlash"),
+				"&amp;id=", encodeURIComponent(this._id),
 				"&amp;uploadUrl=", encodeURIComponent(options.uploadUrl),
 				"&amp;filedataName=", encodeURIComponent(options.filedataName),
 				"&amp;typesDescription=", encodeURIComponent(options.typesDescription),
-				"&amp;httpSuccess=", encodeURIComponent(options.httpSuccess.join(",")),
 				"&amp;queueLimit=", encodeURIComponent(options.queueLimit),
 				"&amp;assumeSuccessTimeout=", encodeURIComponent(options.assumeSuccessTimeout),
-				
 				"&amp;debug=", encodeURIComponent(options.debug),
 				"&amp;multiple=", encodeURIComponent(options.multiple),
 				"&amp;disabled=", encodeURIComponent(options.disabled),
 				"&amp;arrowCursor=", encodeURIComponent(options.arrowCursor),
-				"&amp;useQueryString=", encodeURIComponent(options.useQueryString),
-				
+				"&amp;getMode=", encodeURIComponent(options.getMode),
 				"&amp;sizeMax=", encodeURIComponent(options.sizeMax),
 				"&amp;sizeMin=", encodeURIComponent(options.sizeMin),
 				"&amp;typesAllowed=", encodeURIComponent($.isArray(options.typesAllowed) ? options.typesAllowed.join(",") : options.typesAllowed),
@@ -295,24 +639,15 @@ $.extend(FlashUpload.prototype, /** @lends FlashUpload.prototype */{
 				"&amp;nameMax=", encodeURIComponent(options.nameMax),
 				"&amp;nameMin=", encodeURIComponent(options.nameMin),
 				"&amp;nameIllegalChars=", encodeURIComponent($.isArray(options.nameIllegalChars) ? options.nameIllegalChars.join("") : options.nameIllegalChars),
-				
-				"&amp;postParams=", encodeURIComponent(paramPairs.join("&amp;"))].join("");
+				"&amp;params=", encodeURIComponent(paramPairs.join("&amp;"))].join("");
 		
-		$ui = $(["<span tabindex=\"-1\" class=\"nb-flashupload\">",
-					options.text,
-					"<object type=\"application/x-shockwave-flash\" ",
-							"id=\"", this._movieName, "\" ",// IE requires that flash element HAVE id to invoke ExternalInterface
-							"tabindex=\"-1\" ",// FF and IE will still get in the object when tabbing, FF will trap tab, IE will tab out
-							"data=\"", options.flashUrl, "\" ",
-							"style=\"width: 100%; height: 100%; position: absolute; top: 0; left: 0;\">",
-					"<param name=\"wmode\" value=\"transparent\" />",
-					"<param name=\"quality\" value=\"high\" />",
-					"<param name=\"allowScriptAccess\" value=\"always\" />",
-					"<param name=\"movie\" value=\"", options.flashUrl, "\" />",
-					"<param name=\"flashvars\" value=\"", flahVarsStr, "\" />",
-					"<p>When you see this message, the flash is not loaded or disabled.</p>",
-				"</object>",
-			"</span>"].join(""), options.doc).css($.extend({
+		$ui = $(FlashUpload._substitute(FlashUpload.TMPL_UI, {
+				text: FlashUpload._htmlEncode(options.text),
+				alt: FlashUpload._htmlEncode(options.alt),
+				id: this._id,
+				flashUrl: options.flashUrl,
+				flahvars: flahvars
+			})).css($.extend({
 				display: "inline-block",
 				position: "relative"
 			}, options.css));
@@ -344,15 +679,14 @@ $.extend(FlashUpload.prototype, /** @lends FlashUpload.prototype */{
 	/**
 	 * Handle function calls made to the Flash element.
 	 * Calls are made with a setTimeout for some functions to work around bugs in the ExternalInterface library.
-	 * @private
 	 * @param {String} funcName
-	 * @param {Array} argArr
+	 * @param {Array} [argArr]
 	 */
 	_callFlash: function(funcName, argArr) {
 		var movie = this._getMovieElement();
 		
 		if (!movie) {
-			this.log("(JS) EXCEPTION: Could not find Flash element when call flash function \"" + funcName + "\"");
+			this._log("(JS) EXCEPTION: Could not find Flash element when call flash function \"" + funcName + "\"");
 			return;
 		}
 		
@@ -368,18 +702,16 @@ $.extend(FlashUpload.prototype, /** @lends FlashUpload.prototype */{
 				returnString = movie.CallFunction("<invoke name=\"" + funcName + "\" returntype=\"javascript\">" + __flash__argumentsToXML(argArr || [], 0) + "</invoke>");
 				returnValue = eval(returnString);
 			} catch (ex) {
-				this.log("(JS) EXCEPTION: Fail to call flash \"" + funcName + "\": " + ex.message);
-			}
-			
-			if (returnValue && typeof returnValue.post === "object") {// Unescape file post param values
-				this._unescapeFilePost(returnValue);
+				this._log("(JS) EXCEPTION: Fail to call flash \"" + funcName + "\": " + ex.message);
 			}
 			
 			return returnValue;
 		}
 	},
 	/**
-	 * WARNING: Don't call this.log inside here or you'll create an infinite loop.
+	 * ExternalInterface library is buggy so the event calls are added to a queue and executed by a setTimeout.
+	 * This ensures that events are executed in a determinate order so the ExternalInterface bug is avoided.
+	 * WARNING: Don't call `this._log` inside here or you'll create an infinite loop.
 	 * 
 	 * @param {String} handlerName
 	 * @param {Array} [args]
@@ -388,48 +720,21 @@ $.extend(FlashUpload.prototype, /** @lends FlashUpload.prototype */{
 		var handler = this._options[handlerName];
 		
 		if (handler) {
-			var _this = this,
-				eventQueue = this._eventQueue;
-			// ExternalInterface library is buggy so the event calls are added to a queue and executed by a setTimeout.
-			// This ensures that events are executed in a determinate order so the ExternalInterface bug is avoided.
+			var eventQueue = this._eventQueue;
+			
 			eventQueue.push({
+				ctx: this,
 				fn: handler,
 				args: args || []
 			});
 			setTimeout(function() {// execute next event in the queue
 				var o = eventQueue.shift();
 				if (o) {
-					o.fn.apply(_this, o.args);
+					o.fn.apply(o.ctx, o.args);
 				}
 			}, 0);
 		}
 	},
-	/**
-	 * Part of a work-around for a flash bug where objects passed through ExternalInterface cannot have
-	 * properties that contain characters that are not valid for JavaScript identifiers.
-	 * To work around this the Flash Component escapes the parameter names and we must unescape again before passing them along.
-	 */
-	_unescapeFilePost: function(file) {
-		if (!file || !file.post) {
-			return;
-		}
-		
-		var regX = /[$]([0-9a-f]{4})/i,
-			unescapedPost = {},
-			k, uk, match;
-		for (k in file.post) {
-			if (file.post.hasOwnProperty(k)) {
-				uk = k;
-				while ((match = regX.exec(uk)) !== null) {
-					uk = uk.replace(match[0], String.fromCharCode(parseInt("0x" + match[1], 16)));
-				}
-				unescapedPost[uk] = file.post[k];
-			}
-		}
-		
-		file.post = unescapedPost;
-	},
-	/* ---------------------- PUBLIC ---------------------- */
 	/**
 	 * Coordinate the ui with w/h sizes and x/y positions.
 	 * @param {Object} whlt Object containing width, height, left and top
@@ -467,8 +772,8 @@ $.extend(FlashUpload.prototype, /** @lends FlashUpload.prototype */{
 			}
 			
 			// Destroy other references
-			FlashUpload._instances[this._movieName] = null;
-			delete FlashUpload._instances[this._movieName];
+			FlashUpload._instances[this._id] = null;
+			delete FlashUpload._instances[this._id];
 			
 			this._options = null;
 			this._eventQueue = null;
@@ -479,8 +784,9 @@ $.extend(FlashUpload.prototype, /** @lends FlashUpload.prototype */{
 			return false;
 		}
 	},
-	/* ----------- Flash control methods -----------
+	/* ----------- Flash controling -----------
 	 * Your UI should use these to operate FlashUpload
+	 * NOTE that all AS interfaces exposed to JS are named capitalized like XxxYyy.
 	 * --------------------------------------------*/
 	/**
 	 * @deprecated
@@ -504,7 +810,7 @@ $.extend(FlashUpload.prototype, /** @lends FlashUpload.prototype */{
 	/**
 	 * Cancel any queued file.
 	 * @param {String|Number} fileID The file ID or index. If you do not specify a fileID the current uploading file or first file in the queue is cancelled.
-	 * @param {Boolean} triggerErrorEvent If you do not want the fileUploadError event to trigger you can specify false for the triggerErrorEvent parameter.
+	 * @param {Boolean} triggerErrorEvent If you do not want `onFileUploadError` event to trigger you can specify false for the triggerErrorEvent parameter.
 	 */
 	cancelUpload: function(fileID, triggerErrorEvent) {
 		this._callFlash("CancelUpload", [fileID, triggerErrorEvent !== false]);
@@ -516,11 +822,6 @@ $.extend(FlashUpload.prototype, /** @lends FlashUpload.prototype */{
 	cancelQueue: function(triggerErrorEvent) {
 		this._callFlash("CancelQueue", [triggerErrorEvent !== false]);
 	},
-	/* ------------- Settings methods -------------
-	 * These methods change the FlashUpload settings.
-	 * FlashUpload settings should not be changed directly on the settings object,
-	 * since many of the settings need to be passed to Flash in order to take effect.
-	 * --------------------------------------------*/
 	/**
 	 * Getting/Setting option.
 	 */
@@ -541,8 +842,8 @@ $.extend(FlashUpload.prototype, /** @lends FlashUpload.prototype */{
 		}
 	},
 	/**
-	 * Retrieve a File object by ID or Index.
-	 * @param {String} fileID
+	 * Retrieve a file object by ID or Index.
+	 * @param {String|Number} fileID
 	 * @return {Object} file or null
 	 */
 	getFile: function(fileID) {
@@ -571,206 +872,20 @@ $.extend(FlashUpload.prototype, /** @lends FlashUpload.prototype */{
 	 * @param {String} name
 	 * @param {Anything} value
 	 */
-	addPostParam: function(name, value) {
-		this._options.postParams[name] = value;
-		this.option("postParams", this._options.postParams);
+	addParam: function(name, value) {
+		this._options.params[name] = value;
+		this.option("params", this._options.params);
 	},
 	/**
 	 * Delete post name/value pair.
 	 * @param {String} name
 	 */
-	removePostParam: function(name) {
-		delete this._options.postParams[name];
-		this.option("postParams", this._options.postParams);
-	},
-	/* -------------- Flash JS-side Callbacks --------------
-	 * Below are private, however, since they're bound by AS, don't rename them without changing AS code.
-	 * --------------------------------------------------- */
-	/**
-	 * Called by Flash to see if JS can call in to Flash (test if External Interface is working).
-	 * @private
-	 */
-	testExternalInterface: function() {
-		return this._callFlash("TestExternalInterface") || false;
-	},
-	/**
-	 * Called by Flash after all internal validation check (size, type, name) is done.
-	 * Use the initial validations first, if they can
-	 * @returns {String}
-	 * @private
-	 */
-	validate: function(file) {
-		if (this._options.validate) {
-			return this._options.validate.apply(this, arguments);
-		}
-	},
-	/**
-	 * NOTE: This event is called by Flash when it has finished loading.
-	 * Use the "onFlashReady" event handler to execute custom code when FlashUpload has loaded.
-	 * @private
-	 */
-	flashReady: function() {
-		this.cleanup();
-		this._queueEvent("onFlashReady");
-		this._ready = true;
-		if (this._unreadyFlashCalls) {
-			var flashCall = this._unreadyFlashCalls.shift();
-			while (flashCall) {
-				this._callFlash(flashCall.funcName, flashCall.argArr);
-				flashCall = this._unreadyFlashCalls.shift();
-			}
-			this._unreadyFlashCalls = null;
-		}
-	},
-	/**
-	 * Removes Flash added fuctions to the DOM node to prevent memory leaks in IE.
-	 * This function is called by Flash each time the ExternalInterface functions are created.
-	 * @private
-	 */
-	cleanup: function() {
-		var movie = this._getMovieElement();
-		if (!movie) {
-			return;
-		}
-		
-		window.__flash__removeCallback = function(instance, name) {// Fix flash's own cleanup code so if the SWF movie was removed from the page it doesn't display errors.
-			if (instance) {
-				instance[name] = null;
-			}
-		};
-		
-		// Pro-actively unhook all the Flash functions
-		if (typeof movie.CallFunction === "unknown") {
-			this.log("(JS) Removing Flash functions hooks (this should only run in IE to prevent memory leaks).");
-			for (var k in movie) {
-				try {// You have to try.. catch, in IE, getting "filters" will sometime throw "Unspecified error".
-					if (typeof movie[k] === "function") {
-						movie[k] = null;
-					}
-				} catch (ex) {}
-			}
-		}
-	},
-	/**
-	 * Try to fix IE title change bug when there's # in url.
-	 */
-	hashTitle: function() {
-		if (!$.browser.msie) {
-			return;
-		}
-		var movie = this._getMovieElement();
-		if (!movie) {
-			return;
-		}
-		this._queueEvent("onHashTitle");
-	},
-	/**
-	 * This is a chance to do something when the browse window opens
-	 * @private
-	 */
-	browseStart: function() {
-		this._queueEvent("onBrowseBeforeStart");// TODO in as
-		this._queueEvent("onBrowseStart");
-	},
-	/**
-	 * For non-IE browsers, the flash browsing dialog is not an model dialog, user can click on the page regardless of the browsing dialog hanging there.
-	 * For flash, it never allows tiggering another browsing dialog when there's one alreay.
-	 * Here we provide a chance to do something under this situation like giving some "smart" hint aroud the upload element.
-	 * @private
-	 */
-	browseException: function() {
-		this._queueEvent("onBrowseException");
-	},
-	/**
-	 * Called after the file dialog has closed and the selected files have been queued.
-	 * You could call startUpload here if you want the queued files to begin uploading immediately.
-	 * NOTE: this happens after all "queued" and "queue_error" events.
-	 * @private
-	 * @param {Number} selectNum
-	 * @param {Number} queuedNum
-	 * @param {Number} totalQueuedNum
-	 */
-	browseEnd: function(selectNum, queuedNum, totalQueuedNum) {
-		this._getUI().focus();
-		this._queueEvent("onBrowseEnd", [selectNum, queuedNum, totalQueuedNum]);
-	},
-	/**
-	 * Called when a file is successfully added to the queue.
-	 * @private
-	 * @param {FileItem} file
-	 */
-	fileQueued: function(file) {
-		this._unescapeFilePost(file);
-		this._queueEvent("onFileQueued", [file]);
-	},
-	/**
-	 * Handle errors that occur when an attempt to queue a file fails.
-	 * @private
-	 * @param {FileItem} file
-	 * @param {Array} errors An array of objects { name:String, message: String }-s.
-	 */
-	fileQueueError: function(file, errors) {
-		this._unescapeFilePost(file);
-		this._queueEvent("onFileQueueError", [file, errors]);
-	},
-	/**
-	 * @private
-	 * @param {FileItem} file
-	 */
-	fileUploadStart: function(file) {
-		this._unescapeFilePost(file);
-		this._queueEvent("onFileUploadStart", [file]);
-	},
-	/**
-	 * @private
-	 * @param {FileItem} file
-	 * @param {Number} bytesComplete
-	 * @param {Number} bytesTotal
-	 */
-	fileUploadProgress: function(file, bytesComplete, bytesTotal) {
-		this._unescapeFilePost(file);
-		this._queueEvent("onFileUploadProgress", [file, bytesComplete, bytesTotal]);
-	},
-	/**
-	 * @private
-	 * @param {FileItem} file
-	 * @param {Array} errors
-	 */
-	fileUploadError: function(file, errors) {
-		console.warn(errors);
-		this._unescapeFilePost(file);
-		this._queueEvent("onFileUploadError", [file, errors]);
-	},
-	/**
-	 * @private
-	 * @param {FileItem} file
-	 * @param {Object} serverData
-	 * @param {Object} responseReceived
-	 */
-	fileUploadSuccess: function(file, serverData, responseReceived) {
-		this._unescapeFilePost(file);
-		this._queueEvent("onFileUploadSuccess", [file, serverData, responseReceived]);
-	},
-	/**
-	 * @private
-	 * @param {FileItem} file
-	 */
-	fileUploadComplete: function(file) {
-		this._unescapeFilePost(file);
-		this._queueEvent("onFileUploadComplete", [file]);
-	},
-	/**
-	 * Called by FlashUpload JS and AS functions when debug is enabled. Those message from AS will be tagged with wording "(FLASH)".
-	 * The messages will be written to console (if exists) by default. You can override this event and have messages written where you want.
-	 * @private
-	 * @param {*} ...
-	 */
-	log: function() {
-		if (this._options.debug && arguments.length) {
-			var args = Array.prototype.slice.call(arguments, 0);
-			args.unshift("[FlashUpload] " + this._movieName);
-			this._queueEvent("onDebug", args);
-		}
+	removeParam: function(name) {
+		delete this._options.params[name];
+		this.option("params", this._options.params);
 	}
 });
+
+// export
+window.FlashUpload = FlashUpload;
 })(jQuery);

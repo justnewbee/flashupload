@@ -1,8 +1,8 @@
 package com.flashupload {
 	internal class Options {
 		private static var OPTS : Object = {
-			jsCall: "FlashUpload.callByAS",
-			movieName: "",
+			jsCall: "FlashUpload.callByFlash",
+			id: "",
 			uploadUrl: "",
 			filedataName: "filedata",
 			typesDescription: "",
@@ -10,11 +10,10 @@ package com.flashupload {
 			disabled: false,
 			multiple: true,
 			arrowCursor: false,
-			useQueryString: false,
+			getMode: false,
 			queueLimit: 0,
 			assumeSuccessTimeout: 0,
-			httpSuccess: null,// array
-			postParams: null,// object
+			params: null,// object
 			// for validation
 			sizeMax: 0,
 			sizeMin: 0,
@@ -51,11 +50,8 @@ package com.flashupload {
 			case "nameIllegalChars":
 				parsedVal = this.processNameIllegalChars(val);
 				break;
-			case "httpSuccess":
-				parsedVal = this.processHttpSuccess(val);
-				break;
-			case "postParams":
-				parsedVal = this.processPostParams(val);
+			case "params":
+				parsedVal = this.processParams(val);
 				break;
 			default:
 				switch (typeof OPTS[name]) {
@@ -123,36 +119,18 @@ package com.flashupload {
 			return chars ? chars.split("") : [];
 		}
 		
-		private function processHttpSuccess(httpSuccess : *) : Array {
-			var parsed : Array = [],
-				codesAsString : String = "";
-			if (httpSuccess is String) {
-				codesAsString = httpSuccess as String;
-			} else if (httpSuccess is Array) {
-				codesAsString = (httpSuccess as Array).join(" ");
-			}
-			
-			for each (var code : * in codesAsString.split(/[,;\/\s]/)) {
-				if (code) {
-					parsed.push(Number(code));
-				}
-			}
-			
-			return parsed;
-		}
-		
-		private function processPostParams(postParams : *) : Object {
+		private function processParams(params : *) : Object {
 			var parsed : Object = {};
 			
-			if (postParams is String) {
-				for each (var nameValue : String in (postParams as String).split("&amp;")) {
+			if (params is String) {
+				for each (var nameValue : String in (params as String).split("&amp;")) {
 					var eqIdx : Number = nameValue.indexOf("=");
 					if (eqIdx > 0) {
 						parsed[decodeURIComponent(nameValue.substring(0, eqIdx))] = decodeURIComponent(nameValue.substr(eqIdx + 1));
 					}
 				}
-			} else if (postParams is Object) {
-				parsed = postParams;
+			} else if (params is Object) {
+				parsed = params;
 			}
 			
 			return parsed;
