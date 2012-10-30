@@ -1,7 +1,7 @@
 #FlashUpload
 
 ##Description
----------------------
+
 FlashUpload is inspired by [SWFUpload][].
 
 ##TODOs
@@ -11,7 +11,6 @@ FlashUpload is inspired by [SWFUpload][].
 ##Getting Started
 
 ##Change History
----------------------
 
 ###**1.0.2** _2012-10-24/Jianchun_
 - RMV Option `httpSuccess`, this is rarely used actually, and it still fires IOErrorEvent in flash which extra logic is needed to handle it, so I give it up.
@@ -40,7 +39,6 @@ Here're the bugs fixed
 - FIX IE title problem when there's "#" in url - add `onHashTitle` event
 
 ##Open Issues
----------------------
 - [Firefox cannot restore focus from flash](https://addons.mozilla.org/en-US/firefox/addon/restore-window-focus-after-fla/ "It's unresolvable")
 
 [SWFUpload]: http://code.google.com/p/swfupload/ "JavaScript & Flash Upload Library"
