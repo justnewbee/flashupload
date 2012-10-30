@@ -43,4 +43,4 @@ Here're the bugs fixed
 ---------------------
 - [Firefox cannot restore focus from flash](https://addons.mozilla.org/en-US/firefox/addon/restore-window-focus-after-fla/ "It's unresolvable")
 
-[SWFUpload]: (http://code.google.com/p/swfupload/ "JavaScript & Flash Upload Library")
+[SWFUpload]: http://code.google.com/p/swfupload/ "JavaScript & Flash Upload Library"
